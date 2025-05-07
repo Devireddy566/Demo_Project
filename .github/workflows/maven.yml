@@ -15,7 +15,7 @@ jobs:
 
     env:
       IMAGE_NAME: ecommerce-app
-      GCR_HOSTNAME: pokemon.gcr.io # Or your regional GCR, e.g., us.gcr.io
+      GCR_HOSTNAME: pokemon # Or your regional GCR, e.g., us.gcr.io
       # GCP_PROJECT: Will be taken from secrets
       # GCP_SA_KEY: Will be taken from secrets
 
