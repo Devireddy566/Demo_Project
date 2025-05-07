@@ -21,7 +21,7 @@ jobs:
 
       # STAGE 2: Gitleaks Scan
       - name: STAGE 2 - Scan for secrets with Gitleaks
-        uses: gitleaks/gitleaks-action@v2.3.0 # Pinned to a specific version
+        uses: gitleaks/gitleaks-action@v2 # Updated to latest v2.x.x release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE}} # Uncomment if you have a Gitleaks Pro license and configure the secret
@@ -61,7 +61,7 @@ jobs:
     needs: build_app
     env:
       IMAGE_NAME: pk/e-app
-      GCR_HOSTNAME: us-central1
+      GCR_HOSTNAME: us-central1.gcr.io # Corrected GCR hostname
       # GCP_PROJECT: Will be taken from secrets
       # GCP_SA_KEY: Will be taken from secrets
     steps:
