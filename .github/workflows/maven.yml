@@ -58,18 +58,18 @@ jobs:
 
       - name: Configure Docker for GCR
         run: gcloud auth configure-docker ${{ env.GCR_HOSTNAME }} --quiet
-        shell: powershell # Assuming your runner's default shell or specify bash if needed
+        shell: bash # Assuming your runner's default shell or specify bash if needed
 
       - name: Build Docker image
         run: |
-          docker build `
-            --tag "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" `
-            --tag "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:latest" `
+          docker build \\
+            --tag "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" \\
+            --tag "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:latest" \\
             .
-        shell: powershell # Or your preferred shell
+        shell: bash # Or your preferred shell
 
       - name: Push Docker image to GCR
         run: |
           docker push "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
           docker push "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:latest"
-        shell: powershell # Or your preferred shell
+        shell: bash # Or your preferred shell
