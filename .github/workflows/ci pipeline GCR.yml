@@ -61,7 +61,7 @@ jobs:
     needs: build_app
     env:
       IMAGE_NAME: pk/e-app
-      GCR_HOSTNAME: us-central1.gcr.io
+      GCR_HOSTNAME: us-central1
       # GCP_PROJECT: Will be taken from secrets
       # GCP_SA_KEY: Will be taken from secrets
     steps:
