@@ -1,4 +1,4 @@
-name: ci pipeline GCR
+name: CI/CD Pipeline for E-Commerce App
 
 on:
   push:
@@ -9,87 +9,150 @@ on:
       - main
 
 jobs:
-  checkout_and_scan:
-    name: Checkout, Scan, and Upload Workspace
+  checkout:
+    name: 1️⃣ Checkout Code
     runs-on: [self-hosted, Runner-1]
     steps:
-      # STAGE 1: Checkout
-      - name: STAGE 1 - Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Needed for Gitleaks to scan full history
+          fetch-depth: 0  # Full history for Gitleaks
 
-      # STAGE 2: Gitleaks Scan
-      - name: STAGE 2 - Scan for secrets with Gitleaks
-        uses: gitleaks/gitleaks-action@v2 # Updated to latest v2.x.x release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE}} # Uncomment if you have a Gitleaks Pro license and configure the secret
-      
       - name: Upload workspace artifact
         uses: actions/upload-artifact@v4
         with:
-          name: workspace
+          name: source-code
           path: .
+          retention-days: 1
 
-  build_app:
-    name: Build Java Application and Upload JAR
+  security_scan:
+    name: 2️⃣ Security Scan (Gitleaks)
+    needs: checkout
     runs-on: [self-hosted, Runner-1]
-    needs: checkout_and_scan
     steps:
-      - name: Download workspace artifact
+      - name: Download workspace
         uses: actions/download-artifact@v4
         with:
-          name: workspace
+          name: source-code
           path: .
-      
-      # STAGE 3: Build with Maven
-      - name: STAGE 3 - Build with Maven
-        run: mvn clean install -B -DskipTests
-        # The JAR will be in target/ecommerce-app-1.0-SNAPSHOT.jar (or similar)
-        shell: bash # Assuming bash is preferred, adjust if needed for mvn on runner
 
-      - name: Upload JAR artifact
+      - name: Install and run Gitleaks
+        run: |
+          # Check if gitleaks is installed
+          if ! command -v gitleaks &> /dev/null; then
+            echo "Gitleaks not found, downloading..."
+            VERSION="8.18.2"
+            curl -L "https://github.com/zricethezav/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" -o gitleaks.tar.gz
+            tar -xzf gitleaks.tar.gz
+            chmod +x gitleaks
+            echo "Gitleaks installed"
+          else
+            echo "Gitleaks already installed: $(which gitleaks)"
+          fi
+          
+          # Run gitleaks scan
+          ./gitleaks detect --source="." --verbose || {
+            echo "Gitleaks found issues"
+            exit 1
+          }
+          
+          echo "Gitleaks scan completed successfully"
+        shell: bash
+
+  build:
+    name: 3️⃣ Build Java Application
+    needs: security_scan
+    runs-on: [self-hosted, Runner-1]
+    steps:
+      - name: Download workspace
+        uses: actions/download-artifact@v4
+        with:
+          name: source-code
+          path: .
+
+      - name: Build with Maven
+        run: mvn clean install -B -DskipTests
+        shell: bash
+        
+      - name: Upload built JAR
         uses: actions/upload-artifact@v4
         with:
           name: app-jar
-          path: target/*.jar # Uploads the JAR file(s) from the target directory
+          path: target/*.jar
+          retention-days: 1
 
-  publish_docker_image:
-    name: Build and Push Docker Image to GCR
+  docker_build:
+    name: 4️⃣ Build Docker Image
+    needs: build
     runs-on: [self-hosted, Runner-1]
-    needs: build_app
-    env:
-      IMAGE_NAME: pk/e-app
-      GCR_HOSTNAME: us-central1.gcr.io # Corrected GCR hostname
-      # GCP_PROJECT: Will be taken from secrets
-      # GCP_SA_KEY: Will be taken from secrets
     steps:
-      - name: Download workspace artifact (for Docker context)
+      - name: Download workspace
         uses: actions/download-artifact@v4
         with:
-          name: workspace
+          name: source-code
           path: .
-
-      - name: Download JAR artifact (for Docker build)
+          
+      - name: Download JAR files
         uses: actions/download-artifact@v4
         with:
           name: app-jar
-          path: target # Download JARs into the target directory
+          path: target
 
-      # STAGE 4: Configure Docker for GCR
-      - name: STAGE 4 - Configure Docker for GCR
-        run: gcloud auth configure-docker ${{ env.GCR_HOSTNAME }} --quiet
-        shell: bash
-
-      # STAGE 5: Build Docker image
-      - name: STAGE 5 - Build Docker image
-        run: docker build --tag "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" --tag "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:latest" .
-        shell: bash
-
-      # STAGE 6: Push Docker image to GCR
-      - name: STAGE 6 - Push Docker image to GCR
+      - name: Build Docker image
         run: |
-          docker push "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
-          docker push "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:latest"
+          GCR_HOSTNAME="us-central1.gcr.io"
+          IMAGE_NAME="pk/e-app"
+          GCP_PROJECT="${{ secrets.GCP_PROJECT }}"
+          
+          docker build \
+            --tag "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:${{ github.sha }}" \
+            --tag "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:latest" \
+            .
+        shell: bash
+
+      - name: Save Docker image to file
+        run: |
+          GCR_HOSTNAME="us-central1.gcr.io"
+          IMAGE_NAME="pk/e-app"
+          GCP_PROJECT="${{ secrets.GCP_PROJECT }}"
+          
+          docker save -o docker-image.tar "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:${{ github.sha }}" "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:latest"
+        shell: bash
+        
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: docker-image.tar
+          retention-days: 1
+
+  push_to_gcr:
+    name: 5️⃣ Push to Google Container Registry
+    needs: docker_build
+    runs-on: [self-hosted, Runner-1]
+    steps:
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: .
+      
+      - name: Load Docker image
+        run: docker load -i docker-image.tar
+        shell: bash
+
+      - name: Configure Docker to use Google Cloud credentials
+        run: |
+          GCR_HOSTNAME="us-central1.gcr.io"
+          gcloud auth configure-docker ${GCR_HOSTNAME} --quiet
+        shell: bash
+
+      - name: Push Docker image to GCR
+        run: |
+          GCR_HOSTNAME="us-central1.gcr.io"
+          IMAGE_NAME="pk/e-app"
+          GCP_PROJECT="${{ secrets.GCP_PROJECT }}"
+          
+          docker push "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:${{ github.sha }}"
+          docker push "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:latest"
         shell: bash
