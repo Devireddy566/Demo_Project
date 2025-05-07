@@ -9,20 +9,9 @@ on:
       - main
 
 jobs:
-  build-and-push-to-gcr:
-    name: Build, Scan, Dockerize, and Push to GCR # Updated job name
+  checkout_and_scan:
+    name: Checkout, Scan, and Upload Workspace
     runs-on: [self-hosted, Runner-1]
-
-    env:
-      IMAGE_NAME: pk/e-app
-      GCR_HOSTNAME: us-central1.gcr.io
-      # GCP_PROJECT: Will be taken from secrets
-      # GCP_SA_KEY: Will be taken from secrets
-      # SONAR_TOKEN: Needs to be configured as a secret
-      # SONAR_HOST_URL: Needs to be configured as a secret
-      # SONAR_PROJECT_KEY: Needs to be configured as a secret
-      # GITHUB_TOKEN: Will be taken from secrets
-
     steps:
       # STAGE 1: Checkout
       - name: STAGE 1 - Checkout code
@@ -36,24 +25,69 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE}} # Uncomment if you have a Gitleaks Pro license and configure the secret
+      
+      - name: Upload workspace artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace
+          path: .
 
+  build_app:
+    name: Build Java Application and Upload JAR
+    runs-on: [self-hosted, Runner-1]
+    needs: checkout_and_scan
+    steps:
+      - name: Download workspace artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: workspace
+          path: .
+      
       # STAGE 3: Build with Maven
       - name: STAGE 3 - Build with Maven
         run: mvn clean install -B -DskipTests
         # The JAR will be in target/ecommerce-app-1.0-SNAPSHOT.jar (or similar)
+        shell: bash # Assuming bash is preferred, adjust if needed for mvn on runner
 
+      - name: Upload JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-jar
+          path: target/*.jar # Uploads the JAR file(s) from the target directory
+
+  publish_docker_image:
+    name: Build and Push Docker Image to GCR
+    runs-on: [self-hosted, Runner-1]
+    needs: build_app
+    env:
+      IMAGE_NAME: pk/e-app
+      GCR_HOSTNAME: us-central1.gcr.io
+      # GCP_PROJECT: Will be taken from secrets
+      # GCP_SA_KEY: Will be taken from secrets
+    steps:
+      - name: Download workspace artifact (for Docker context)
+        uses: actions/download-artifact@v4
+        with:
+          name: workspace
+          path: .
+
+      - name: Download JAR artifact (for Docker build)
+        uses: actions/download-artifact@v4
+        with:
+          name: app-jar
+          path: target # Download JARs into the target directory
+
+      # STAGE 4: Configure Docker for GCR
       - name: STAGE 4 - Configure Docker for GCR
         run: gcloud auth configure-docker ${{ env.GCR_HOSTNAME }} --quiet
         shell: bash
 
+      # STAGE 5: Build Docker image
       - name: STAGE 5 - Build Docker image
-        run: |
-          docker build \\
-            --tag "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" \\
-            --tag "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:latest" \\
-            .
+        run: docker build --tag "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" --tag "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:latest" .
         shell: bash
 
+      # STAGE 6: Push Docker image to GCR
       - name: STAGE 6 - Push Docker image to GCR
         run: |
           docker push "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
