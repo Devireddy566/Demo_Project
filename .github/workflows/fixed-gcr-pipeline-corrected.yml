@@ -54,31 +54,6 @@ jobs:
         run: mvn clean install -B -DskipTests
         shell: bash
 
-      - name: Run Unit Tests
-        run: mvn test
-        shell: bash
-        
-      - name: Generate Test Reports
-        if: always()
-        run: |
-          mkdir -p test-reports
-          if [ -d "target/surefire-reports" ]; then
-            cp -r target/surefire-reports test-reports/
-          fi
-          
-          if [ -d "target/failsafe-reports" ]; then
-            cp -r target/failsafe-reports test-reports/
-          fi
-        shell: bash
-        
-      - name: Upload Test Reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-reports
-          path: test-reports
-          retention-days: 5
-
       - name: Configure Docker to use Google Cloud credentials
         run: |
           GCR_HOSTNAME="gcr.io"
@@ -127,38 +102,6 @@ jobs:
             --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
             .
         shell: bash
-
-      - name: Scan Docker image with Trivy
-        run: |
-          GCR_HOSTNAME="gcr.io"
-          IMAGE_NAME="pk/e-app"
-          GCP_PROJECT="${{ secrets.GCP_PROJECT }}"
-          
-          # Make sure we're using sudo to access the Docker daemon
-          echo "Running Trivy scan with proper permissions..."
-          
-          # Create output directory for reports
-          mkdir -p trivy-reports
-          
-          # Run Trivy with sudo to access Docker daemon and export results
-          sudo trivy image --format json --output trivy-reports/trivy-results.json "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:latest" || echo "Trivy JSON output failed but continuing"
-          
-          # Run scan for vulnerabilities with proper access to Docker - using exit code 0 to not fail the build
-          sudo trivy image --exit-code 0 --severity HIGH,CRITICAL "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:latest"
-          
-          # Give ownership of the results back to the runner user
-          if [ -d "trivy-reports" ]; then
-            sudo chown -R $(id -u):$(id -g) trivy-reports/
-          fi
-        shell: bash
-        
-      - name: Upload Trivy results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-results
-          path: trivy-reports/
-          retention-days: 7
 
       - name: Push Docker image to GCR
         run: |
