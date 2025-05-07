@@ -126,7 +126,9 @@ jobs:
             --label "org.opencontainers.image.revision=${{ github.sha }}" \
             --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
             .
-        shell: bash      - name: Scan Docker image with Trivy
+        shell: bash
+
+      - name: Scan Docker image with Trivy
         run: |
           GCR_HOSTNAME="gcr.io"
           IMAGE_NAME="pk/e-app"
@@ -141,7 +143,7 @@ jobs:
           # Run Trivy with sudo to access Docker daemon and export results
           sudo trivy image --format json --output trivy-reports/trivy-results.json "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:latest" || echo "Trivy JSON output failed but continuing"
           
-          # Run scan for vulnerabilities with proper access to Docker
+          # Run scan for vulnerabilities with proper access to Docker - using exit code 0 to not fail the build
           sudo trivy image --exit-code 0 --severity HIGH,CRITICAL "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:latest"
           
           # Give ownership of the results back to the runner user
@@ -155,7 +157,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: trivy-results
-          path: trivy-results.json
+          path: trivy-reports/
           retention-days: 7
 
       - name: Push Docker image to GCR
