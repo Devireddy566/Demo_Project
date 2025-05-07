@@ -14,9 +14,9 @@ jobs:
     runs-on: [self-hosted, Runner-1] # Your self-hosted runner in GCP
 
     env:
-      IMAGE_NAME: ecommerce-app # From your pom.xml artifactId or define as needed
-      GCR_HOSTNAME: gcr.io
-      # GCP_PROJECT_ID: Will be taken from secrets
+      IMAGE_NAME: pokemon/ecommerce-app
+      GCR_HOSTNAME: gcr.io # Or your regional GCR, e.g., us.gcr.io
+      # GCP_PROJECT: Will be taken from secrets
       # GCP_SA_KEY: Will be taken from secrets
 
     steps:
@@ -63,13 +63,13 @@ jobs:
       - name: Build Docker image
         run: |
           docker build `
-            --tag "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" ` # Updated to use GCP_PROJECT
-            --tag "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:latest" ` # Updated to use GCP_PROJECT
+            --tag "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" `
+            --tag "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:latest" `
             .
-        shell: powershell
+        shell: powershell # Or your preferred shell
 
       - name: Push Docker image to GCR
         run: |
-          docker push "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" # Updated to use GCP_PROJECT
-          docker push "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:latest" # Updated to use GCP_PROJECT
-        shell: powershell
+          docker push "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          docker push "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:latest"
+        shell: powershell # Or your preferred shell
