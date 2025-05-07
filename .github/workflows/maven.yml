@@ -1,35 +1,75 @@
-# This workflow will build a Java project with Maven, and cache/restore any dependencies to improve the workflow execution time
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-java-with-maven
-
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-
-name: Java CI with Maven
+name: Build and Deploy Docker Image to GCR
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
   pull_request:
-    branches: [ "main" ]
+    branches:
+      - main
 
 jobs:
-  build:
+  build-and-push-to-gcr:
+    name: Build Java App, Dockerize, and Push to GCR
+    runs-on: [self-hosted, Runner-1] # Your self-hosted runner in GCP
 
-    runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: ecommerce-app # From your pom.xml artifactId or define as needed
+      GCR_HOSTNAME: gcr.io
+      # GCP_PROJECT_ID: Will be taken from secrets
+      # GCP_SA_KEY: Will be taken from secrets
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
-        cache: maven
-    - name: Build with Maven
-      run: mvn -B package --file pom.xml
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    # Optional: Uploads the full dependency graph to GitHub to improve the quality of Dependabot alerts this repository can receive
-    - name: Update dependency graph
-      uses: advanced-security/maven-dependency-submission-action@571e99aab1055c2e71a1e2309b9691de18d6b7d6
+      - name: Set up JDK 17 (Verify existing installation)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin' # Or your preferred distribution
+        # This step can help ensure the correct Java version is in the PATH
+        # if multiple versions are present, or can be skipped if you are certain
+        # your runner's environment is already correctly configured.
+
+      - name: Build with Maven (Create JAR)
+        run: mvn clean install -B -DskipTests
+        # -B for batch mode
+        # -DskipTests can be used here if tests are run in a separate dedicated step,
+        # or remove -DskipTests if you want tests to run as part of this build.
+        # The JAR will be in target/ecommerce-app-1.0-SNAPSHOT.jar (or similar)
+
+      # Authenticate to Google Cloud
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }} # Updated to use GCP_SA_KEY
+          # If using Workload Identity Federation (recommended):
+          # workload_identity_provider: 'projects/YOUR_PROJECT_NUMBER/locations/global/workloadIdentityPools/YOUR_POOL_ID/providers/YOUR_PROVIDER_ID'
+          # service_account: 'your-gcp-service-account-email@your-project-id.iam.gserviceaccount.com'
+
+      - name: Set up Google Cloud SDK (if not pre-installed or to ensure version)
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT }} # Updated to use GCP_PROJECT
+        # This step ensures gcloud CLI is available and configured.
+        # If gcloud is already perfectly configured on your runner, you might make this optional.
+
+      - name: Configure Docker for GCR
+        run: gcloud auth configure-docker ${{ env.GCR_HOSTNAME }} --quiet
+        shell: powershell # Assuming your runner's default shell or specify bash if needed
+
+      - name: Build Docker image
+        run: |
+          docker build `
+            --tag "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" ` # Updated to use GCP_PROJECT
+            --tag "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:latest" ` # Updated to use GCP_PROJECT
+            .
+        shell: powershell
+
+      - name: Push Docker image to GCR
+        run: |
+          docker push "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" # Updated to use GCP_PROJECT
+          docker push "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:latest" # Updated to use GCP_PROJECT
+        shell: powershell
