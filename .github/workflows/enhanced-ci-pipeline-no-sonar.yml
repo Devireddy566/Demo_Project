@@ -1,0 +1,369 @@
+name: CI/CD Pipeline for E-Commerce App
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  checkout:
+    name: 1️⃣ Checkout Code
+    runs-on: [self-hosted, Runner-1]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for Gitleaks
+
+      - name: Upload workspace artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-code
+          path: .
+          retention-days: 1
+
+  security_scan:
+    name: 2️⃣ Security Scan (Gitleaks)
+    needs: checkout
+    runs-on: [self-hosted, Runner-1]
+    steps:
+      - name: Download workspace
+        uses: actions/download-artifact@v4
+        with:
+          name: source-code
+          path: .
+
+      - name: Install and run Gitleaks
+        run: |
+          # Check if gitleaks is installed
+          if ! command -v gitleaks &> /dev/null; then
+            echo "Gitleaks not found, downloading..."
+            VERSION="8.18.2"
+            curl -L "https://github.com/zricethezav/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" -o gitleaks.tar.gz
+            tar -xzf gitleaks.tar.gz
+            chmod +x gitleaks
+            echo "Gitleaks installed"
+          else
+            echo "Gitleaks already installed: $(which gitleaks)"
+          fi
+          
+          # Run gitleaks scan
+          ./gitleaks detect --source="." --verbose || {
+            echo "Gitleaks found issues"
+            exit 1
+          }
+          
+          echo "Gitleaks scan completed successfully"
+        shell: bash
+
+  build:
+    name: 3️⃣ Build Java Application
+    needs: security_scan
+    runs-on: [self-hosted, Runner-1]
+    steps:
+      - name: Download workspace
+        uses: actions/download-artifact@v4
+        with:
+          name: source-code
+          path: .
+          
+      - name: Set up Maven cache
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Build with Maven
+        run: mvn clean install -B -DskipTests
+        shell: bash
+        
+      - name: Run Unit Tests
+        run: mvn test
+        shell: bash
+        
+      # Note: SonarQube analysis was removed. You can add it back later by configuring 
+      # SONAR_TOKEN and SONAR_HOST_URL secrets in your GitHub repository
+        
+      - name: Upload built JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-jar
+          path: target/*.jar
+          retention-days: 1
+          
+      - name: Generate Test Reports
+        if: always()
+        run: |
+          mkdir -p test-reports
+          if [ -d "target/surefire-reports" ]; then
+            cp -r target/surefire-reports test-reports/
+            echo "Copied surefire test reports"
+          fi
+          
+          if [ -d "target/failsafe-reports" ]; then
+            cp -r target/failsafe-reports test-reports/
+            echo "Copied failsafe test reports"
+          fi
+        shell: bash
+        
+      - name: Upload Test Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: test-reports
+          retention-days: 5
+
+  docker_build:
+    name: 4️⃣ Build Docker Image
+    needs: build
+    runs-on: [self-hosted, Runner-1]
+    steps:
+      - name: Download workspace
+        uses: actions/download-artifact@v4
+        with:
+          name: source-code
+          path: .
+          
+      - name: Download JAR files
+        uses: actions/download-artifact@v4
+        with:
+          name: app-jar
+          path: target
+
+      - name: Build Docker image
+        run: |
+          # Use standard gcr.io hostname which is more widely supported
+          GCR_HOSTNAME="gcr.io"
+          IMAGE_NAME="pk/e-app"
+          GCP_PROJECT="${{ secrets.GCP_PROJECT }}"
+          
+          # Add build timestamp label
+          BUILD_TIMESTAMP=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          
+          docker build \
+            --tag "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:${{ github.sha }}" \
+            --tag "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:latest" \
+            --label "org.opencontainers.image.created=$BUILD_TIMESTAMP" \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            .
+        shell: bash
+
+      - name: Install Trivy
+        run: |
+          # Check if Trivy is installed
+          if ! command -v trivy &> /dev/null; then
+            echo "Trivy not found, downloading..."
+            VERSION="0.48.1"
+            wget -qO - "https://github.com/aquasecurity/trivy/releases/download/v${VERSION}/trivy_${VERSION}_Linux-64bit.tar.gz" | tar -zxvf -
+            chmod +x ./trivy
+            sudo mv ./trivy /usr/local/bin/trivy || mv ./trivy /tmp/trivy
+            echo "Trivy installed"
+          else
+            echo "Trivy already installed: $(which trivy)"
+          fi
+        shell: bash
+
+      - name: Scan Docker image with Trivy
+        run: |
+          GCR_HOSTNAME="gcr.io"
+          IMAGE_NAME="pk/e-app"
+          GCP_PROJECT="${{ secrets.GCP_PROJECT }}"
+          
+          # Determine Trivy path
+          TRIVY_BIN=$(command -v trivy || echo "/tmp/trivy")
+          
+          # Create vulnerabilities report
+          ${TRIVY_BIN} image --format json --output trivy-results.json "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:latest"
+          
+          # Run Trivy scan with exit code on failures
+          ${TRIVY_BIN} image --exit-code 1 --severity HIGH,CRITICAL "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:latest"
+          
+          echo "Trivy scan completed successfully - no HIGH or CRITICAL vulnerabilities found"
+        shell: bash
+        
+      - name: Upload Trivy results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-results
+          path: trivy-results.json
+          retention-days: 7
+
+      - name: Save Docker image to file
+        run: |
+          GCR_HOSTNAME="gcr.io"
+          IMAGE_NAME="pk/e-app"
+          GCP_PROJECT="${{ secrets.GCP_PROJECT }}"
+          
+          docker save -o docker-image.tar "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:${{ github.sha }}" "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:latest"
+        shell: bash
+        
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: docker-image.tar
+          retention-days: 1
+
+  push_jar_to_gcr:
+    name: 5️⃣ Push JAR to GCR
+    needs: build
+    runs-on: [self-hosted, Runner-1]
+    steps:
+      - name: Download JAR files
+        uses: actions/download-artifact@v4
+        with:
+          name: app-jar
+          path: ./jar-files
+
+      - name: Configure gcloud authentication
+        run: |
+          GCR_HOSTNAME="gcr.io"
+          gcloud auth configure-docker ${GCR_HOSTNAME} --quiet
+        shell: bash
+
+      - name: Push JAR to GCR
+        run: |
+          GCP_PROJECT="${{ secrets.GCP_PROJECT }}"
+          GCR_HOSTNAME="gcr.io"
+          
+          # Get the JAR file name (assuming only one JAR in the directory)
+          JAR_FILE=$(ls ./jar-files/*.jar | head -n 1)
+          JAR_FILENAME=$(basename "$JAR_FILE")
+          
+          # Create a Dockerfile specifically for the JAR
+          echo "FROM gcr.io/distroless/java17" > Dockerfile.jar
+          echo "COPY $JAR_FILE /app.jar" >> Dockerfile.jar
+          echo "ENTRYPOINT [\"java\", \"-jar\", \"/app.jar\"]" >> Dockerfile.jar
+          
+          # Add JVM options for better container performance
+          echo "ENV JAVA_OPTS=\"-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0\"" >> Dockerfile.jar
+          
+          # Build and push as a JAR container
+          docker build -f Dockerfile.jar -t ${GCR_HOSTNAME}/${GCP_PROJECT}/pk/jar/${JAR_FILENAME}:latest .
+          docker push ${GCR_HOSTNAME}/${GCP_PROJECT}/pk/jar/${JAR_FILENAME}:latest
+          
+          echo "JAR successfully pushed to GCR as a container"
+        shell: bash
+
+  push_to_gcr:
+    name: 6️⃣ Push Docker Image to GCR
+    needs: [docker_build, push_jar_to_gcr]
+    runs-on: [self-hosted, Runner-1]
+    steps:
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: .
+      
+      - name: Load Docker image
+        run: docker load -i docker-image.tar
+        shell: bash
+
+      - name: Configure Docker to use Google Cloud credentials
+        run: |
+          GCR_HOSTNAME="gcr.io"
+          gcloud auth configure-docker ${GCR_HOSTNAME} --quiet
+        shell: bash
+
+      - name: Push Docker image to GCR
+        run: |
+          GCR_HOSTNAME="gcr.io"
+          IMAGE_NAME="pk/e-app"
+          GCP_PROJECT="${{ secrets.GCP_PROJECT }}"
+          
+          docker push "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:${{ github.sha }}"
+          docker push "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:latest"
+        shell: bash
+      
+      - name: Clean up Docker images
+        run: |
+          GCR_HOSTNAME="gcr.io"
+          IMAGE_NAME="pk/e-app"
+          GCP_PROJECT="${{ secrets.GCP_PROJECT }}"
+          
+          # Remove the Docker images to free up space
+          echo "Cleaning up Docker images..."
+          docker rmi "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:${{ github.sha }}"
+          docker rmi "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:latest"
+          
+          # Clean up JAR Docker image
+          JAR_IMAGES=$(docker images "${GCR_HOSTNAME}/${GCP_PROJECT}/pk/jar/*" --format "{{.Repository}}:{{.Tag}}")
+          if [ ! -z "$JAR_IMAGES" ]; then
+            echo "$JAR_IMAGES" | xargs docker rmi
+          fi
+          
+          # Optional: clean up untagged images (dangling)
+          docker image prune -f
+          
+          echo "Docker cleanup completed"
+        shell: bash
+
+  notify_deployment:
+    name: 7️⃣ Notify Deployment
+    needs: push_to_gcr
+    runs-on: [self-hosted, Runner-1]
+    if: ${{ success() }}
+    steps:
+      - name: Prepare deployment message
+        id: deployment-info
+        run: |
+          echo "time=$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_OUTPUT
+          echo "image=gcr.io/${{ secrets.GCP_PROJECT }}/pk/e-app:${{ github.sha }}" >> $GITHUB_OUTPUT
+        shell: bash
+      
+      - name: Send deployment notification
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": "E-Commerce App Deployment Successful 🚀",
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "E-Commerce App Deployment Successful 🚀"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Repository:*\n${{ github.repository }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Branch:*\n${{ github.ref_name }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Image:*\n${{ steps.deployment-info.outputs.image }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Deployment Time:*\n${{ steps.deployment-info.outputs.time }}"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+        continue-on-error: true
