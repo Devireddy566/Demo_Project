@@ -100,7 +100,8 @@ jobs:
 
       - name: Build Docker image
         run: |
-          GCR_HOSTNAME="us-central1.gcr.io"
+          # Use standard gcr.io hostname which is more widely supported
+          GCR_HOSTNAME="gcr.io"
           IMAGE_NAME="pk/e-app"
           GCP_PROJECT="${{ secrets.GCP_PROJECT }}"
           
@@ -112,7 +113,7 @@ jobs:
 
       - name: Save Docker image to file
         run: |
-          GCR_HOSTNAME="us-central1.gcr.io"
+          GCR_HOSTNAME="gcr.io"
           IMAGE_NAME="pk/e-app"
           GCP_PROJECT="${{ secrets.GCP_PROJECT }}"
           
@@ -143,13 +144,13 @@ jobs:
 
       - name: Configure Docker to use Google Cloud credentials
         run: |
-          GCR_HOSTNAME="us-central1.gcr.io"
+          GCR_HOSTNAME="gcr.io"
           gcloud auth configure-docker ${GCR_HOSTNAME} --quiet
         shell: bash
 
       - name: Push Docker image to GCR
         run: |
-          GCR_HOSTNAME="us-central1.gcr.io"
+          GCR_HOSTNAME="gcr.io"
           IMAGE_NAME="pk/e-app"
           GCP_PROJECT="${{ secrets.GCP_PROJECT }}"
           
