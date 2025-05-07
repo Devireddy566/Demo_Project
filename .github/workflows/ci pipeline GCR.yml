@@ -1,0 +1,61 @@
+name: ci pipeline GCR
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-push-to-gcr:
+    name: Build, Scan, Dockerize, and Push to GCR # Updated job name
+    runs-on: [self-hosted, Runner-1]
+
+    env:
+      IMAGE_NAME: pk/e-app
+      GCR_HOSTNAME: us-central1.gcr.io
+      # GCP_PROJECT: Will be taken from secrets
+      # GCP_SA_KEY: Will be taken from secrets
+      # SONAR_TOKEN: Needs to be configured as a secret
+      # SONAR_HOST_URL: Needs to be configured as a secret
+      # SONAR_PROJECT_KEY: Needs to be configured as a secret
+      # GITHUB_TOKEN: Will be taken from secrets
+
+    steps:
+      # STAGE 1: Checkout
+      - name: STAGE 1 - Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Needed for Gitleaks to scan full history
+
+      # STAGE 2: Gitleaks Scan
+      - name: STAGE 2 - Scan for secrets with Gitleaks
+        uses: gitleaks/gitleaks-action@v2.3.0 # Pinned to a specific version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE}} # Uncomment if you have a Gitleaks Pro license and configure the secret
+
+      # STAGE 3: Build with Maven
+      - name: STAGE 3 - Build with Maven
+        run: mvn clean install -B -DskipTests
+        # The JAR will be in target/ecommerce-app-1.0-SNAPSHOT.jar (or similar)
+
+      - name: STAGE 4 - Configure Docker for GCR
+        run: gcloud auth configure-docker ${{ env.GCR_HOSTNAME }} --quiet
+        shell: bash
+
+      - name: STAGE 5 - Build Docker image
+        run: |
+          docker build \\
+            --tag "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" \\
+            --tag "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:latest" \\
+            .
+        shell: bash
+
+      - name: STAGE 6 - Push Docker image to GCR
+        run: |
+          docker push "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          docker push "${{ env.GCR_HOSTNAME }}/${{ secrets.GCP_PROJECT }}/${{ env.IMAGE_NAME }}:latest"
+        shell: bash
