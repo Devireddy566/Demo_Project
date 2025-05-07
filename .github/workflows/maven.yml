@@ -11,11 +11,9 @@ on:
 jobs:
   build-and-push-to-gcr:
     name: Build Java App, Dockerize, and Push to GCR
-    runs-on: [self-hosted, Runner-1] # Your self-hosted runner in GCP
-
-    env:
+    runs-on: [self-hosted, Runner-1] # Your self-hosted runner in GCP    env:
       IMAGE_NAME: pk/e-app
-      GCR_HOSTNAME: us-central1.gcr.io
+      GCR_HOSTNAME: gcr.io
       # GCP_PROJECT: Will be taken from secrets
       # GCP_SA_KEY: Will be taken from secrets
 
