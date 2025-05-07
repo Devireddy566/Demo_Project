@@ -1,0 +1,182 @@
+name: GCR-CI-Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    name: Build and Deploy to GCR
+    runs-on: [self-hosted, Runner-1]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for Gitleaks
+
+      - name: Security Scan (Gitleaks)
+        id: gitleaks
+        run: |
+          # Check if gitleaks is installed
+          if ! command -v gitleaks &> /dev/null; then
+            echo "Gitleaks not found, downloading..."
+            VERSION="8.18.2"
+            curl -L "https://github.com/zricethezav/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" -o gitleaks.tar.gz
+            tar -xzf gitleaks.tar.gz
+            chmod +x gitleaks
+            echo "Gitleaks installed"
+          else
+            echo "Gitleaks already installed: $(which gitleaks)"
+          fi
+          
+          # Run gitleaks scan
+          ./gitleaks detect --source="." --verbose || {
+            echo "Gitleaks found issues"
+            exit 1
+          }
+          
+          echo "Gitleaks scan completed successfully"
+        shell: bash
+          
+      - name: Set up Maven cache
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Build with Maven
+        run: mvn clean install -B -DskipTests
+        shell: bash
+
+      - name: Run Unit Tests
+        run: mvn test
+        shell: bash
+        
+      - name: Generate Test Reports
+        if: always()
+        run: |
+          mkdir -p test-reports
+          if [ -d "target/surefire-reports" ]; then
+            cp -r target/surefire-reports test-reports/
+          fi
+          
+          if [ -d "target/failsafe-reports" ]; then
+            cp -r target/failsafe-reports test-reports/
+          fi
+        shell: bash
+        
+      - name: Upload Test Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: test-reports
+          retention-days: 5
+
+      - name: Configure Docker to use Google Cloud credentials
+        run: |
+          GCR_HOSTNAME="gcr.io"
+          gcloud auth configure-docker ${GCR_HOSTNAME} --quiet
+        shell: bash
+
+      - name: Push JAR to GCR
+        run: |
+          GCP_PROJECT="${{ secrets.GCP_PROJECT }}"
+          GCR_HOSTNAME="gcr.io"
+          
+          # Get the JAR file name
+          JAR_FILE=$(ls ./target/*.jar | head -n 1)
+          
+          # Use a fixed lowercase name for the Docker image tag
+          TAG_NAME="ecommerce-app"
+          
+          # Create a Dockerfile specifically for the JAR
+          echo "FROM gcr.io/distroless/java17" > Dockerfile.jar
+          echo "COPY $JAR_FILE /app.jar" >> Dockerfile.jar
+          echo "ENV JAVA_OPTS=\"-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0\"" >> Dockerfile.jar
+          echo "ENTRYPOINT [\"java\", \"-jar\", \"/app.jar\"]" >> Dockerfile.jar
+          
+          # Build and push as a JAR container
+          docker build -f Dockerfile.jar -t ${GCR_HOSTNAME}/${GCP_PROJECT}/pk/jar/${TAG_NAME}:latest .
+          docker push ${GCR_HOSTNAME}/${GCP_PROJECT}/pk/jar/${TAG_NAME}:latest
+          
+          echo "JAR successfully pushed to GCR as a container"
+        shell: bash
+
+      - name: Build main Docker image
+        run: |
+          # Use standard gcr.io hostname
+          GCR_HOSTNAME="gcr.io"
+          IMAGE_NAME="pk/e-app"
+          GCP_PROJECT="${{ secrets.GCP_PROJECT }}"
+          
+          # Add build timestamp label
+          BUILD_TIMESTAMP=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          
+          docker build \
+            --tag "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:${{ github.sha }}" \
+            --tag "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:latest" \
+            --label "org.opencontainers.image.created=$BUILD_TIMESTAMP" \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            .
+        shell: bash
+
+      - name: Scan Docker image with Trivy
+        run: |
+          GCR_HOSTNAME="gcr.io"
+          IMAGE_NAME="pk/e-app"
+          GCP_PROJECT="${{ secrets.GCP_PROJECT }}"
+          
+          # Use the pre-installed Trivy on the runner
+          trivy image --format json --output trivy-results.json "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:latest"
+          
+          # Run Trivy scan with exit code on failures
+          trivy image --exit-code 1 --severity HIGH,CRITICAL "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:latest"
+        shell: bash
+        
+      - name: Upload Trivy results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-results
+          path: trivy-results.json
+          retention-days: 7
+
+      - name: Push Docker image to GCR
+        run: |
+          GCR_HOSTNAME="gcr.io"
+          IMAGE_NAME="pk/e-app"
+          GCP_PROJECT="${{ secrets.GCP_PROJECT }}"
+          
+          docker push "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:${{ github.sha }}"
+          docker push "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:latest"
+        shell: bash
+      
+      - name: Clean up Docker images
+        if: always()
+        run: |
+          GCR_HOSTNAME="gcr.io"
+          IMAGE_NAME="pk/e-app"
+          GCP_PROJECT="${{ secrets.GCP_PROJECT }}"
+          
+          # Remove the Docker images to free up space
+          echo "Cleaning up Docker images..."
+          docker rmi "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:${{ github.sha }}" || true
+          docker rmi "${GCR_HOSTNAME}/${GCP_PROJECT}/${IMAGE_NAME}:latest" || true
+          
+          # Clean up JAR Docker image
+          echo "Cleaning up JAR Docker image..."
+          docker rmi "${GCR_HOSTNAME}/${GCP_PROJECT}/pk/jar/ecommerce-app:latest" || true
+          
+          # Clean up untagged images
+          docker image prune -f
+          
+          echo "Docker cleanup completed"
+        shell: bash
