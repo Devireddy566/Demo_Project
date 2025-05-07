@@ -14,8 +14,8 @@ jobs:
     runs-on: [self-hosted, Runner-1] # Your self-hosted runner in GCP
 
     env:
-      IMAGE_NAME: ecommerce-app
-      GCR_HOSTNAME: pokemon # Or your regional GCR, e.g., us.gcr.io
+      IMAGE_NAME: pk/e-app # GCR repo 'pk', image 'e-app'
+      GCR_HOSTNAME: us-central1.gcr.io # Actual GCR hostname for us-central1
       # GCP_PROJECT: Will be taken from secrets
       # GCP_SA_KEY: Will be taken from secrets
 
