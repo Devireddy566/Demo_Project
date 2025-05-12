@@ -3,7 +3,7 @@ name: CI Pipeline
 on:
   push:
     branches:
-      - main # Or your primary development branch, e.g., master
+      - main # Or your primary development branch, e.g., master.
   pull_request:
     branches:
       - main # Or your primary development branch
