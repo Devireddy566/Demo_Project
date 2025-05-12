@@ -10,8 +10,8 @@ on:
 
 jobs:
   build_and_scan:
-    name: Build
-    runs-on: [self-hosted, Runner-1]
+    name: Build and Scan
+    runs-on: [self-hosted, pipeline-Runner]
 
     steps:
       - name: Stage 1 - Checkout Code
