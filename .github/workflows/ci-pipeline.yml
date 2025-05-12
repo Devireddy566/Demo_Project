@@ -10,7 +10,7 @@ on:
 
 jobs:
   build_and_scan:
-    name: Build, Scan, and Analyze
+    name: Build
     runs-on: [self-hosted, Runner-1]
 
     steps:
