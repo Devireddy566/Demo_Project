@@ -26,10 +26,10 @@ jobs:
           # GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }} # If you have a Gitleaks Pro/Enterprise license
         # The action will fail by default if leaks are found, stopping the pipeline.
 
-      - name: Set up JDK 11
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: '11'
+          java-version: '17'
           distribution: 'temurin' # Using Temurin as a common distribution
 
       - name: Cache Maven packages
@@ -41,7 +41,7 @@ jobs:
             ${{ runner.os }}-maven-
 
       - name: Stage 3 - Build with Maven
-        run: mvn -B clean verify
+        run: mvn -B clean install
         # -B for batch mode (non-interactive)
         # 'verify' compiles, runs tests, and packages the application.
         # If tests fail, this step fails, and the pipeline stops.
