@@ -11,7 +11,7 @@ on:
 jobs:
   build_and_scan:
     name: Build, Scan, and Analyze
-    runs-on: [self-hosted, Runner-1] # Specifies your self-hosted runner
+    runs-on: [self-hosted, Runner-1]
 
     steps:
       - name: Stage 1 - Checkout Code
