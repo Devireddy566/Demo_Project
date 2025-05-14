@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-with-pv
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx-with-pv
+  template:
+    metadata:
+      labels:
+        app: nginx-with-pv
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+        volumeMounts:
+        - mountPath: /usr/share/nginx/html
+          name: html-volume
+      volumes:
+      - name: html-volume
+        persistentVolumeClaim:
+          claimName: pokemon-pvc
