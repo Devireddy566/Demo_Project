@@ -21,6 +21,10 @@
         <maven.compiler.source>${java.version}</maven.compiler.source>
         <maven.compiler.target>${java.version}</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <sonar.projectKey>${project.groupId}:${project.artifactId}</sonar.projectKey>
+        <sonar.organization>default-organization</sonar.organization> <!-- Optional: Change if you use a specific SonarQube/SonarCloud organization -->
+        <sonar.host.url>${env.SONAR_HOST_URL}</sonar.host.url> <!-- Optional: Define here or pass via CLI/env -->
+        <sonar.login>${env.SONAR_TOKEN}</sonar.login> <!-- Optional: Define here or pass via CLI/env -->
     </properties>
 
     <dependencies>
@@ -84,6 +88,11 @@
                         </exclude>
                     </excludes>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.sonarsource.scanner.maven</groupId>
+                <artifactId>sonar-maven-plugin</artifactId>
+                <version>3.11.0.3922</version> <!-- Use the latest compatible version -->
             </plugin>
         </plugins>
     </build>
